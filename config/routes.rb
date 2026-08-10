@@ -64,7 +64,7 @@ Rails.application.routes.draw do
 
     nested do
       scope path: ":bot_key", as: :bot, defaults: { format: :json } do
-        resources :messages, controller: "messages/by_bots", only: %i[ index create ] do
+        resources :messages, controller: "messages/by_bots", only: %i[ index create update destroy ] do
           resources :boosts, controller: "messages/boosts/by_bots", only: :create
         end
       end

@@ -148,4 +148,81 @@ class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
     get room_messages_url(@room, bot_key: users(:bender).bot_key)
     assert_response :forbidden
   end
+
+  test "update" do
+    message = post_bot_message "Deploying..."
+
+    assert_no_difference -> { Message.count } do
+      patch room_bot_message_url(@room, users(:bender).bot_key, message), params: +"Deployed."
+    end
+
+    assert_response :ok
+    assert_equal "Deployed.", message.reload.plain_text_body
+  end
+
+  test "update with UTF-8 content" do
+    message = post_bot_message "Deploying..."
+
+    patch room_bot_message_url(@room, users(:bender).bot_key, message), params: +"Deployed 🚀!"
+
+    assert_response :ok
+    assert_equal "Deployed 🚀!", message.reload.plain_text_body
+  end
+
+  test "update can't touch a message the bot did not create" do
+    message = messages(:fourth)
+    original = message.plain_text_body
+
+    patch room_bot_message_url(@room, users(:bender).bot_key, message), params: +"Hijacked!"
+
+    assert_response :forbidden
+    assert_equal original, message.reload.plain_text_body
+  end
+
+  test "update is not found for a room the bot is not a member of" do
+    message = messages(:first)
+    original = message.plain_text_body
+
+    patch room_bot_message_url(rooms(:designers), users(:bender).bot_key, message), params: +"Hijacked!"
+
+    assert_response :not_found
+    assert_equal original, message.reload.plain_text_body
+  end
+
+  test "update can't be abused to edit messages as any user" do
+    message = messages(:fourth)
+    bot_key = "#{users(:jz).id}-"
+    original = message.plain_text_body
+
+    patch room_bot_message_url(@room, bot_key, message), params: +"Hijacked!"
+
+    assert_response :redirect
+    assert_equal original, message.reload.plain_text_body
+  end
+
+  test "destroy" do
+    message = post_bot_message "Deploying..."
+
+    assert_difference -> { Message.count }, -1 do
+      delete room_bot_message_url(@room, users(:bender).bot_key, message)
+    end
+
+    assert_response :no_content
+  end
+
+  test "destroy can't touch a message the bot did not create" do
+    message = messages(:fourth)
+
+    assert_no_difference -> { Message.count } do
+      delete room_bot_message_url(@room, users(:bender).bot_key, message)
+    end
+
+    assert_response :forbidden
+  end
+
+  private
+    def post_bot_message(body)
+      post room_bot_messages_url(@room, users(:bender).bot_key), params: +body
+      Message.last
+    end
 end
