@@ -1,9 +1,11 @@
 class Messages::ByBotsController < MessagesController
   include RawRequestBody
 
-  allow_bot_access only: %i[ index create ]
+  allow_bot_access only: %i[ index create update destroy ]
 
   before_action :set_room
+  before_action :set_message, only: %i[ update destroy ]
+  before_action :ensure_can_administer, only: %i[ update destroy ]
   before_action :ensure_body_or_attachment_present, only: :create
 
   def index
@@ -14,6 +16,11 @@ class Messages::ByBotsController < MessagesController
   def create
     super
     head :created, location: message_url(@message)
+  end
+
+  def destroy
+    super
+    head :no_content
   end
 
   private
