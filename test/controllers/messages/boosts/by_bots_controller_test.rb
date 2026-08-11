@@ -79,4 +79,34 @@ class Messages::Boosts::ByBotsControllerTest < ActionDispatch::IntegrationTest
     end
     assert_response :redirect
   end
+
+  test "destroy removes the bot's own boost" do
+    assert_difference -> { Boost.count }, -1 do
+      delete room_bot_message_boost_url(@room, @bot.bot_key, @message, boosts(:fourth_by_bender))
+    end
+
+    assert_response :no_content
+  end
+
+  test "destroy broadcasts the removal" do
+    assert_turbo_stream_broadcasts [ @message.room, :messages ], count: 1 do
+      delete room_bot_message_boost_url(@room, @bot.bot_key, @message, boosts(:fourth_by_bender))
+    end
+  end
+
+  test "destroy can't touch a boost the bot did not make" do
+    assert_no_difference -> { Boost.count } do
+      delete room_bot_message_boost_url(@room, @bot.bot_key, messages(:thirteenth), boosts(:thirteenth))
+    end
+
+    assert_response :not_found
+  end
+
+  test "destroy requires a valid bot key" do
+    assert_no_difference -> { Boost.count } do
+      delete room_bot_message_boost_url(@room, "invalid-bot-key", @message, boosts(:fourth_by_bender))
+    end
+
+    assert_response :redirect
+  end
 end
