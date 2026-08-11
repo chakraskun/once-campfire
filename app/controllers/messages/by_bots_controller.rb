@@ -18,13 +18,6 @@ class Messages::ByBotsController < MessagesController
     head :created, location: message_url(@message)
   end
 
-  # ensure_can_administer still applies, and can_administer? only grants access to
-  # a record the user created, so a bot key reaches that bot's own messages and no others.
-  def update
-    update_message
-    head :ok
-  end
-
   def destroy
     super
     head :no_content

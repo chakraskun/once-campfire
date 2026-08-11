@@ -158,6 +158,12 @@ class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :ok
     assert_equal "Deployed.", message.reload.plain_text_body
+
+    json = JSON.parse(response.body)
+    assert_equal message.id, json["id"]
+    assert_equal "Deployed.", json["body"]["plain_text"]
+    assert_equal users(:bender).id, json["creator"]["id"]
+    assert_equal room_message_url(@room, message), json["url"]
   end
 
   test "update with UTF-8 content" do
@@ -167,6 +173,7 @@ class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :ok
     assert_equal "Deployed 🚀!", message.reload.plain_text_body
+    assert_equal "Deployed 🚀!", JSON.parse(response.body)["body"]["plain_text"]
   end
 
   test "update can't touch a message the bot did not create" do

@@ -34,8 +34,14 @@ class MessagesController < ApplicationController
   end
 
   def update
-    update_message
-    redirect_to room_message_url(@room, @message)
+    @message.update!(message_params)
+
+    @message.broadcast_replace_to @room, :messages, target: [ @message, :presentation ], partial: "messages/presentation", attributes: { maintain_scroll: true }
+
+    respond_to do |format|
+      format.html { redirect_to room_message_url(@room, @message) }
+      format.json { render :show }
+    end
   end
 
   def destroy
@@ -46,13 +52,6 @@ class MessagesController < ApplicationController
   private
     def set_message
       @message = @room.messages.find(params[:id])
-    end
-
-    # Extracted so bots can reuse the update and its broadcast while answering with
-    # a status code instead of a redirect.
-    def update_message
-      @message.update!(message_params)
-      @message.broadcast_replace_to @room, :messages, target: [ @message, :presentation ], partial: "messages/presentation", attributes: { maintain_scroll: true }
     end
 
     def ensure_can_administer
