@@ -62,10 +62,13 @@ Rails.application.routes.draw do
   resources :rooms do
     resources :messages
 
-    # Bot API endpoints - authenticated via bot_key in URL
-    get ":bot_key/messages", to: "messages/by_bots#index", as: :bot_messages_index
-    post ":bot_key/messages", to: "messages/by_bots#create", as: :bot_messages
-    post ":bot_key/messages/:message_id/boosts", to: "messages/boosts/by_bots#create", as: :bot_message_boosts
+    nested do
+      scope path: ":bot_key", as: :bot, defaults: { format: :json } do
+        resources :messages, controller: "messages/by_bots", only: %i[ index create ] do
+          resources :boosts, controller: "messages/boosts/by_bots", only: :create
+        end
+      end
+    end
 
     scope module: "rooms" do
       resource :refresh, only: :show

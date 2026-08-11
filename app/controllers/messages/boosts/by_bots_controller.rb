@@ -1,33 +1,33 @@
-class Messages::Boosts::ByBotsController < ApplicationController
+class Messages::Boosts::ByBotsController < Messages::BoostsController
+  include RawRequestBody
+
   allow_bot_access only: :create
 
+  before_action :ensure_content_present
+
   def create
-    set_message
-    @boost = @message.boosts.create!(content: read_body)
+    @boost = @message.boosts.create!(boost_params)
 
     broadcast_create
-    head :created
-  rescue ActiveRecord::RecordNotFound
-    head :not_found
+    render :show, status: :created
   end
 
   private
     def set_message
-      @room = Current.user.rooms.find(params[:room_id])
-      @message = @room.messages.find(params[:message_id])
+      if room = Current.user.rooms.find_by(id: params[:room_id])
+        @message = room.messages.find_by(id: params[:message_id])
+      end
+
+      head :not_found unless @message
     end
 
-    def read_body
-      request.body.rewind
-      request.body.read.force_encoding("UTF-8")
-    ensure
-      request.body.rewind
+    def ensure_content_present
+      if raw_request_body.blank?
+        head :unprocessable_content
+      end
     end
 
-    def broadcast_create
-      @boost.broadcast_append_to @boost.message.room, :messages,
-        target: "boosts_message_#{@boost.message.client_message_id}",
-        partial: "messages/boosts/boost",
-        attributes: { maintain_scroll: true }
+    def boost_params
+      { content: raw_request_body }
     end
 end

@@ -1,73 +1,57 @@
 class Messages::ByBotsController < MessagesController
+  include RawRequestBody
+
   allow_bot_access only: %i[ index create ]
 
+  before_action :set_room
+  before_action :ensure_body_or_attachment_present, only: :create
+
   def index
-    set_room
     @messages = find_paged_messages
-    render json: messages_as_json(@messages)
-  rescue ActiveRecord::RecordNotFound
-    head :not_found
+    set_pagination_headers
   end
 
   def create
-    set_room
-    @message = @room.messages.create_with_attachment!(message_params)
-    @message.broadcast_create
-    deliver_webhooks_to_bots
+    super
     head :created, location: message_url(@message)
-  rescue ActiveRecord::RecordNotFound
-    head :not_found
   end
 
   private
-    def messages_as_json(messages)
-      {
-        room: {
-          id: @room.id,
-          name: @room.name
-        },
-        messages: messages.map { |m| message_as_json(m) },
-        pagination: pagination_info(messages)
-      }
+    def set_room
+      @room = Current.user.rooms.find_by(id: params[:room_id])
+
+      head :not_found unless @room
     end
 
-    def message_as_json(message)
-      {
-        id: message.id,
-        body: {
-          plain: message.plain_text_body,
-          html: message.body&.body&.to_s
-        },
-        created_at: message.created_at.iso8601,
-        creator: {
-          id: message.creator.id,
-          name: message.creator.name,
-          is_bot: message.creator.bot?
-        }
-      }
+    def ensure_body_or_attachment_present
+      if params[:attachment].blank? && raw_request_body.blank?
+        head :unprocessable_content
+      end
     end
 
-    def pagination_info(messages)
-      return {} if messages.empty?
-      {
-        oldest_id: messages.last.id,
-        newest_id: messages.first.id,
-        has_more: messages.size == Message::PAGE_SIZE
-      }
+    def set_pagination_headers
+      headers["X-Total-Count"] = @room.messages.count.to_s
+
+      if next_page = next_page_params
+        headers["Link"] = %(<#{room_bot_messages_url(@room, params[:bot_key], **next_page)}>; rel="next")
+      end
+    end
+
+    def next_page_params
+      if @messages.any?
+        if params[:after].present?
+          { after: @messages.last.id } if @room.messages.after(@messages.last).exists?
+        else
+          { before: @messages.first.id } if @room.messages.before(@messages.first).exists?
+        end
+      end
     end
 
     def message_params
       if params[:attachment]
         params.permit(:attachment)
       else
-        reading(request.body) { |body| { body: body } }
+        { body: raw_request_body }
       end
-    end
-
-    def reading(io)
-      io.rewind
-      yield io.read.force_encoding("UTF-8")
-    ensure
-      io.rewind
     end
 end

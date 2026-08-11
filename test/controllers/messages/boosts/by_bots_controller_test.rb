@@ -3,27 +3,29 @@ require "test_helper"
 class Messages::Boosts::ByBotsControllerTest < ActionDispatch::IntegrationTest
   setup do
     @room = rooms(:watercooler)
-    @message = messages(:fourth)  # Message in watercooler room where bender bot is a member
+    @message = messages(:fourth)
     @bot = users(:bender)
   end
 
-  test "create adds a boost to the message" do
+  test "create adds a boost to the message and returns it" do
     assert_difference -> { @message.boosts.count }, +1 do
       post room_bot_message_boosts_url(@room, @bot.bot_key, @message), params: +"👀"
       assert_response :created
     end
 
-    assert_equal "👀", @message.boosts.last.content
+    boost = @message.boosts.last
+    assert_equal "👀", boost.content
+    assert_equal @bot, boost.booster
+
+    json = JSON.parse(response.body)
+    assert_equal boost.id, json["id"]
+    assert_equal "👀", json["content"]
+    assert_equal @bot.id, json["booster"]["id"]
+    assert_equal @message.id, json["message"]["id"]
+    assert_equal room_message_url(@room, @message), json["message"]["url"]
   end
 
-  test "create with emoji reaction" do
-    assert_difference -> { Boost.count }, +1 do
-      post room_bot_message_boosts_url(@room, @bot.bot_key, @message), params: +"🎉"
-      assert_response :created
-    end
-  end
-
-  test "create with text reaction" do
+  test "create with text content" do
     assert_difference -> { Boost.count }, +1 do
       post room_bot_message_boosts_url(@room, @bot.bot_key, @message), params: +"Nice!"
       assert_response :created
@@ -38,35 +40,39 @@ class Messages::Boosts::ByBotsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "create requires valid bot key" do
+  test "create without content" do
+    assert_no_difference -> { Boost.count } do
+      post room_bot_message_boosts_url(@room, @bot.bot_key, @message)
+      assert_response :unprocessable_content
+
+      post room_bot_message_boosts_url(@room, @bot.bot_key, @message), params: +"   "
+      assert_response :unprocessable_content
+    end
+  end
+
+  test "create requires a valid bot key" do
     assert_no_difference -> { Boost.count } do
       post room_bot_message_boosts_url(@room, "invalid-bot-key", @message), params: +"👀"
     end
-    assert_response :redirect  # Redirects to login
+    assert_response :redirect
   end
 
-  test "create returns not_found for room bot is not a member of" do
-    room_without_bot = rooms(:designers)
-    message_in_other_room = messages(:first)  # Message in designers room
-
+  test "create is not found for a room the bot is not a member of" do
     assert_no_difference -> { Boost.count } do
-      post room_bot_message_boosts_url(room_without_bot, @bot.bot_key, message_in_other_room), params: +"👀"
+      post room_bot_message_boosts_url(rooms(:designers), @bot.bot_key, messages(:first)), params: +"👀"
     end
     assert_response :not_found
   end
 
-  test "create returns not_found for message not in the room" do
-    message_in_other_room = messages(:first)  # Message in designers room, not watercooler
-
+  test "create is not found for a message outside the room" do
     assert_no_difference -> { Boost.count } do
-      post room_bot_message_boosts_url(@room, @bot.bot_key, message_in_other_room), params: +"👀"
+      post room_bot_message_boosts_url(@room, @bot.bot_key, messages(:first)), params: +"👀"
     end
     assert_response :not_found
   end
 
-  test "create can't be abused to post boosts as regular user" do
-    user = users(:kevin)
-    bot_key = "#{user.id}-"
+  test "create can't be abused to post boosts as a regular user" do
+    bot_key = "#{users(:kevin).id}-"
 
     assert_no_difference -> { Boost.count } do
       post room_bot_message_boosts_url(@room, bot_key, @message), params: +"👀"

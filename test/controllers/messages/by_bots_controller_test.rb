@@ -1,6 +1,6 @@
 require "test_helper"
 
-class Messages::ByBotsControlleTest < ActionDispatch::IntegrationTest
+class Messages::ByBotsControllerTest < ActionDispatch::IntegrationTest
   setup do
     @room = rooms(:watercooler)
   end
@@ -40,6 +40,16 @@ class Messages::ByBotsControlleTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "create without a body or attachment" do
+    assert_no_difference -> { Message.count } do
+      post room_bot_messages_url(@room, users(:bender).bot_key)
+      assert_response :unprocessable_content
+
+      post room_bot_messages_url(@room, users(:bender).bot_key), params: +"   "
+      assert_response :unprocessable_content
+    end
+  end
+
   test "create can't be abused to post messages as any user" do
     user = users(:kevin)
     bot_key = "#{user.id}-"
@@ -51,77 +61,90 @@ class Messages::ByBotsControlleTest < ActionDispatch::IntegrationTest
     assert_response :redirect
   end
 
-  test "index returns messages as JSON" do
-    get room_bot_messages_index_url(@room, users(:bender).bot_key)
+  test "index returns the room's messages in the order they were sent" do
+    get room_bot_messages_url(@room, users(:bender).bot_key)
     assert_response :success
 
     json = JSON.parse(response.body)
-    assert json["room"]["id"].present?
-    assert json["room"]["name"].present?
-    assert json["messages"].is_a?(Array)
-    assert json["pagination"].present?
+    assert_equal @room.messages.ordered.map(&:id), json.map { it["id"] }
   end
 
   test "index includes message details" do
-    # Create a message in the room first
-    post room_bot_messages_url(@room, users(:bender).bot_key), params: +"Test message for index"
+    post room_bot_messages_url(@room, users(:bender).bot_key), params: +"Hello from Bender!"
 
-    get room_bot_messages_index_url(@room, users(:bender).bot_key)
+    get room_bot_messages_url(@room, users(:bender).bot_key)
+    assert_response :success
+
+    message = Message.last
+    json_message = JSON.parse(response.body).last
+    assert_equal message.id, json_message["id"]
+    assert_equal "Hello from Bender!", json_message["body"]["plain_text"]
+    assert_includes json_message["body"]["html"], "Hello from Bender!"
+    assert_equal message.created_at.utc.iso8601(3), json_message["created_at"]
+    assert_equal users(:bender).id, json_message["creator"]["id"]
+    assert_equal "Bender Bot", json_message["creator"]["name"]
+    assert_equal "bot", json_message["creator"]["role"]
+    assert_equal @room.id, json_message["room"]["id"]
+    assert_equal room_message_url(@room, message), json_message["url"]
+  end
+
+  test "index pages through older messages with the Link header" do
+    (Message::PAGE_SIZE - @room.messages.count + 1).times do |i|
+      @room.messages.create!(body: "Filler #{i}", creator: users(:jason), client_message_id: "filler-#{i}")
+    end
+
+    get room_bot_messages_url(@room, users(:bender).bot_key)
     assert_response :success
 
     json = JSON.parse(response.body)
-    message = json["messages"].find { |m| m["body"]["plain"] == "Test message for index" }
-    assert message.present?, "Expected to find the test message"
-    assert message["id"].present?
-    assert message["created_at"].present?
-    assert message["creator"]["id"].present?
-    assert message["creator"]["name"].present?
-  end
+    assert_equal Message::PAGE_SIZE, json.size
+    assert_equal "41", response.headers["X-Total-Count"]
+    assert_not_includes json.map { it["id"] }, messages(:fourth).id
 
-  test "index supports pagination with before parameter" do
-    # Use a message from the watercooler room (where bender is a member)
-    message_in_room = messages(:thirteenth)  # Latest message in watercooler
-    get room_bot_messages_index_url(@room, users(:bender).bot_key, before: message_in_room.id)
+    get response.headers["Link"][/<(.*)>/, 1]
     assert_response :success
+
+    json = JSON.parse(response.body)
+    assert_equal [ messages(:fourth).id ], json.map { it["id"] }
+    assert_nil response.headers["Link"]
   end
 
-  test "index supports pagination with after parameter" do
-    # Use a message from the watercooler room (where bender is a member)
-    message_in_room = messages(:fourth)  # First message in watercooler
-    get room_bot_messages_index_url(@room, users(:bender).bot_key, after: message_in_room.id)
+  test "index pages newer messages with after" do
+    get room_bot_messages_url(@room, users(:bender).bot_key, after: messages(:tenth).id)
     assert_response :success
+
+    json = JSON.parse(response.body)
+    assert_equal %i[ eleventh twelfth thirteenth ].map { messages(it).id }, json.map { it["id"] }
+    assert_nil response.headers["Link"]
   end
 
-  test "index requires valid bot key" do
-    get room_bot_messages_index_url(@room, "invalid-bot-key")
-    assert_response :redirect  # Redirects to login
+  test "index in a room with no messages" do
+    get room_bot_messages_url(rooms(:bender_and_kevin), users(:bender).bot_key)
+    assert_response :success
+
+    assert_equal [], JSON.parse(response.body)
+    assert_equal "0", response.headers["X-Total-Count"]
+    assert_nil response.headers["Link"]
   end
 
-  test "index returns not_found for room bot is not a member of" do
-    # bender bot is NOT a member of the designers room
-    room_without_bot = rooms(:designers)
-    get room_bot_messages_index_url(room_without_bot, users(:bender).bot_key)
+  test "index requires a valid bot key" do
+    get room_bot_messages_url(@room, "invalid-bot-key")
+    assert_response :redirect
+  end
+
+  test "index is not found for a room the bot is not a member of" do
+    get room_bot_messages_url(rooms(:designers), users(:bender).bot_key)
     assert_response :not_found
   end
 
-  test "index works for room bot IS a member of" do
-    # bender bot IS a member of watercooler
-    room_with_bot = rooms(:watercooler)
-    get room_bot_messages_index_url(room_with_bot, users(:bender).bot_key)
-    assert_response :success
-  end
-
-  test "create returns not_found for room bot is not a member of" do
-    # bender bot is NOT a member of the designers room - verify create matches index behavior
-    room_without_bot = rooms(:designers)
+  test "create is not found for a room the bot is not a member of" do
     assert_no_difference -> { Message.count } do
-      post room_bot_messages_url(room_without_bot, users(:bender).bot_key), params: +"Hello!"
+      post room_bot_messages_url(rooms(:designers), users(:bender).bot_key), params: +"Hello!"
     end
     assert_response :not_found
   end
 
-  test "regular messages index still denied for bots" do
-    # The standard messages endpoint (not the bot-specific one) should still be forbidden
+  test "regular messages index remains denied for bots" do
     get room_messages_url(@room, bot_key: users(:bender).bot_key)
     assert_response :forbidden
   end
