@@ -27,7 +27,7 @@ class Messages::BoostsController < ApplicationController
     end
 
     def set_boost
-      @boost = Current.user.boosts.find(params[:id])
+      @boost = @message.boosts.find_by!(id: params[:id], booster: Current.user)
     end
 
     def boost_params
