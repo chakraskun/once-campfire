@@ -1,9 +1,9 @@
 class Messages::Boosts::ByBotsController < Messages::BoostsController
   include RawRequestBody
 
-  allow_bot_access only: :create
+  allow_bot_access only: %i[ create destroy ]
 
-  before_action :ensure_content_present
+  before_action :ensure_content_present, only: :create
 
   def create
     @boost = @message.boosts.create!(boost_params)
@@ -19,6 +19,12 @@ class Messages::Boosts::ByBotsController < Messages::BoostsController
       end
 
       head :not_found unless @message
+    end
+
+    def set_boost
+      super
+    rescue ActiveRecord::RecordNotFound
+      head :not_found
     end
 
     def ensure_content_present
